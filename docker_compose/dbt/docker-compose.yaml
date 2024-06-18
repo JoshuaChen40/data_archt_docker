@@ -1,0 +1,16 @@
+version: '1.0'
+
+networks:
+  airflow-tier:
+    external: true
+
+services:
+  dbt:
+    image: dbt
+    container_name: dbt
+    networks:
+      - airflow-tier
+    restart: always
+    volumes:
+      - /usr/data_archt/python_module:/app/python_module
+      - /usr/data_archt/dbt/image/sample_project:/app/sample_project

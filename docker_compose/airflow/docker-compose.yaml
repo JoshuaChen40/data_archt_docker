@@ -1,0 +1,169 @@
+version: '2.1'
+
+networks:
+  airflow-tier:
+    driver: bridge
+
+x-airflow-common:
+  &airflow-common
+  # and uncomment the "build" line below, Then run `docker-compose build` to build the images.
+  image: ${AIRFLOW_IMAGE_NAME:-apache/airflow:2.7.3}
+  # build: .
+  environment:
+    &airflow-common-env
+    PYTHONDONTWRITEBYTECODE: 1
+    PYTHONPATH: /opt/python_module
+    AIRFLOW_UID: 50000
+    AIRFLOW__CORE__EXECUTOR: CeleryExecutor
+    AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@postgres/airflow
+    AIRFLOW__CELERY__RESULT_BACKEND: postgresql+psycopg2://airflow:airflow@postgres/airflow
+    AIRFLOW__CELERY__BROKER_URL: redis://airflow-redis:6379/0
+    AIRFLOW__CORE__DAGS_FOLDER: /opt/airflow/dags
+    AIRFLOW__SCHEDULER__DAG_DIR_LIST_INTERVAL: 60
+    AIRFLOW__SCHEDULER__MIN_FILE_PROCESS_INTERVAL: 60
+    AIRFLOW__CORE__FERNET_KEY: ''
+    AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: 'true'
+    AIRFLOW__CORE__LOAD_EXAMPLES: 'false'
+    AIRFLOW__CELERY__FLOWER_PORT: 5555
+    AIRFLOW__API__AUTH_BACKENDS: 'airflow.api.auth.backend.basic_auth,airflow.api.auth.backend.session'
+    # yamllint disable rule:line-length
+    # Use simple http server on scheduler for health checks
+    # See https://airflow.apache.org/docs/apache-airflow/stable/administration-and-deployment/logging-monitoring/check-health.html#scheduler-health-check-server
+    # yamllint enable rule:line-length
+    AIRFLOW__SCHEDULER__ENABLE_HEALTH_CHECK: 'true'
+    # WARNING: Use _PIP_ADDITIONAL_REQUIREMENTS option ONLY for a quick checks
+    # for other purpose (development, test and especially production usage) build/extend Airflow image.
+    _PIP_ADDITIONAL_REQUIREMENTS: ${_PIP_ADDITIONAL_REQUIREMENTS:-}
+  volumes:
+    - /usr/data_archt/python_module:/opt/python_module
+    - /usr/data_archt/mysql:/opt/mysql
+    - /usr/data_archt/airflow/dags:/opt/airflow/dags
+    - /usr/data_archt/airflow/logs:/opt/airflow/logs
+    - /usr/data_archt/airflow/config:/opt/airflow/config
+    - /usr/data_archt/airflow/plugins:/opt/airflow/plugins
+  user: "${AIRFLOW_UID:-50000}:0"
+  depends_on:
+    &airflow-common-depends-on
+    airflow-redis:
+      condition: service_healthy
+    airflow-mariadb:
+      condition: service_healthy
+
+  airflow-webserver:
+    <<: *airflow-common
+    image: airflow
+    container_name: airflow-webserver
+    command: bash -c 'airflow db init &&
+      airflow users create --username airflow --firstname airflow --lastname airflow --role Admin --email airflow777@gmail.com --password airflow &&
+      exec airflow webserver'
+    ports:
+      - "8080:8080"
+    networks:
+      - airflow-tier
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    restart: always
+    depends_on:
+      <<: *airflow-common-depends-on
+
+  airflow-scheduler:
+    <<: *airflow-common
+    image: airflow_default_worker
+    container_name: airflow-scheduler
+    command: scheduler
+    networks:
+      - airflow-tier
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "http://localhost:8974/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    restart: always
+    depends_on:
+      <<: *airflow-common-depends-on
+
+  airflow-worker-1:
+    <<: *airflow-common
+    image: airflow_default_worker
+    container_name: airflow-worker-1
+    command: airflow celery worker
+    networks:
+      - airflow-tier
+    environment:
+      <<: *airflow-common-env
+      AIRFLOW__CELERY__WORKER_CONCURRENCY: 4
+    restart: always
+    depends_on:
+      <<: *airflow-common-depends-on
+
+  airflow-worker-2:
+    <<: *airflow-common
+    image: airflow_default_worker
+    container_name: airflow-worker-2
+    command: airflow celery worker
+    networks:
+      - airflow-tier
+    environment:
+      <<: *airflow-common-env
+      AIRFLOW__CELERY__WORKER_CONCURRENCY: 4
+    restart: always
+    depends_on:
+      <<: *airflow-common-depends-on
+
+  airflow-triggerer:
+    <<: *airflow-common
+    image: airflow_default_worker
+    container_name: airflow-triggerer
+    command: triggerer
+    networks:
+      - airflow-tier
+    healthcheck:
+      test: ["CMD-SHELL", 'airflow jobs check --job-type TriggererJob --hostname "$${HOSTNAME}"']
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    restart: always
+    depends_on:
+      <<: *airflow-common-depends-on
+
+  airflow-cli:
+    <<: *airflow-common
+    profiles:
+      - debug
+    environment:
+      <<: *airflow-common-env
+      CONNECTION_CHECK_MAX_COUNT: "0"
+    # Workaround for entrypoint issue. See: https://github.com/apache/airflow/issues/16252
+    command:
+      - bash
+      - -c
+      - airflow
+
+  # You can enable flower by adding "--profile flower" option e.g. docker-compose --profile flower up
+  # See: https://docs.docker.com/compose/profiles/
+  airflow-flower:
+    <<: *airflow-common
+    image: airflow
+    container_name: airflow-flower
+    command: airflow celery flower
+    profiles:
+      - flower
+    ports:
+      - "5555:5555"
+    networks:
+      - airflow-tier
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "http://localhost:5555/"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    restart: always
+    depends_on:
+      <<: *airflow-common-depends-on
