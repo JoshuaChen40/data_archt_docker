@@ -26,7 +26,7 @@ services=(
     # "kafka" 
     # "airflow" 
     "dbt" 
-    # "mlflow" 
+    "mlflow" 
     # "flask" 
     # "fastapi" 
     # "dash" 
