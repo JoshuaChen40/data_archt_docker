@@ -17,5 +17,6 @@ services:
       - MLFLOW_BACKEND_STORE_URI=postgresql://postgres:Aa123456@postgres:5432/postgres
       - MLFLOW_ARTIFACT_ROOT=/mlflow/artifacts
     volumes:
-      - /usr/data_archt/python_module:/app/python_module
+      - /usr/data_archt/python_module:/mlflow/python_module
+      - /usr/data_archt/mlflow/image/sample_project:/mlflow/sample_project
     command: ["mlflow", "server", "--host", "0.0.0.0"]
